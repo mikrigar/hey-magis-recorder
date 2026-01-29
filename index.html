@@ -1,0 +1,1496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hey Magis – Wake Word Recorder</title>
+    <!--
+    =============================================================================
+    WAKE WORD RECORDING WIDGET
+    Collects training data for "Hey Magis" wake word model
+    
+    CONFIGURATION:
+    Edit the GOOGLE_DRIVE_FOLDER_URL below to set your shared folder link.
+    
+    LOCAL RUN INSTRUCTIONS:
+    Must be served over HTTP (not file://) for mic permissions.
+    
+    Option 1 - Python:
+      cd /path/to/this/folder
+      python -m http.server 8000
+      Open http://localhost:8000
+    
+    Option 2 - Node.js:
+      npx serve .
+      Open http://localhost:3000
+    
+    DEPLOYMENT:
+    
+    GitHub Pages:
+      1. Create a new repository
+      2. Upload index.html to the repo
+      3. Go to Settings > Pages
+      4. Select "main" branch and "/" (root)
+      5. Save and wait for deployment
+    
+    Netlify:
+      1. Drag and drop folder containing index.html to netlify.com/drop
+      2. Or connect your GitHub repo for auto-deploy
+    
+    Vercel:
+      1. Install Vercel CLI: npm i -g vercel
+      2. Run: vercel
+      3. Follow prompts
+    =============================================================================
+    -->
+    
+    <!-- JSZip for creating ZIP files -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    
+    <style>
+        :root {
+            --bg-primary: #0f0f12;
+            --bg-secondary: #1a1a20;
+            --bg-tertiary: #252530;
+            --text-primary: #f0f0f5;
+            --text-secondary: #9090a0;
+            --text-muted: #606070;
+            --accent: #6366f1;
+            --accent-hover: #818cf8;
+            --accent-dim: #4f46e520;
+            --success: #22c55e;
+            --success-dim: #22c55e20;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --border: #303040;
+            --radius: 12px;
+            --radius-sm: 8px;
+            --shadow: 0 4px 24px rgba(0,0,0,0.4);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            line-height: 1.5;
+        }
+
+        .container {
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 24px 16px 48px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 32px;
+            padding-bottom: 24px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        header h1 {
+            font-size: 1.75rem;
+            font-weight: 700;
+            margin-bottom: 8px;
+            background: linear-gradient(135deg, var(--accent) 0%, #a855f7 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        header p {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+        }
+
+        .card {
+            background: var(--bg-secondary);
+            border-radius: var(--radius);
+            padding: 20px;
+            margin-bottom: 16px;
+            border: 1px solid var(--border);
+        }
+
+        .card.highlight-success {
+            border-color: var(--success);
+            background: linear-gradient(135deg, var(--bg-secondary) 0%, rgba(34, 197, 94, 0.05) 100%);
+        }
+
+        .card-title {
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            margin-bottom: 16px;
+        }
+
+        .card-title.success {
+            color: var(--success);
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .form-group.full-width {
+            grid-column: 1 / -1;
+        }
+
+        label {
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+        }
+
+        input, select {
+            padding: 10px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            color: var(--text-primary);
+            font-size: 0.95rem;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-dim);
+        }
+
+        input::placeholder {
+            color: var(--text-muted);
+        }
+
+        input:read-only {
+            opacity: 0.7;
+        }
+
+        .recording-section {
+            text-align: center;
+            padding: 32px 20px;
+        }
+
+        .countdown-display {
+            font-size: 5rem;
+            font-weight: 700;
+            color: var(--accent);
+            margin-bottom: 16px;
+            min-height: 100px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .countdown-display.recording {
+            color: var(--error);
+            animation: pulse 0.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
+        .status-text {
+            font-size: 1.1rem;
+            color: var(--text-secondary);
+            margin-bottom: 24px;
+            min-height: 28px;
+        }
+
+        .record-btn {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            border: 4px solid var(--accent);
+            background: transparent;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 24px;
+        }
+
+        .record-btn:not(:disabled):hover {
+            background: var(--accent-dim);
+            transform: scale(1.05);
+        }
+
+        .record-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .record-btn-inner {
+            width: 48px;
+            height: 48px;
+            background: var(--accent);
+            border-radius: 50%;
+            transition: all 0.2s;
+        }
+
+        .record-btn.recording .record-btn-inner {
+            background: var(--error);
+            border-radius: 8px;
+            width: 36px;
+            height: 36px;
+        }
+
+        .progress-display {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+        }
+
+        .progress-bar-container {
+            width: 100%;
+            height: 8px;
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 16px;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent), #a855f7);
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+
+        .playback-controls {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border-radius: var(--radius-sm);
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: none;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: var(--accent-hover);
+        }
+
+        .btn-success {
+            background: var(--success);
+            color: white;
+        }
+
+        .btn-success:hover:not(:disabled) {
+            background: #16a34a;
+        }
+
+        .btn-secondary {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: var(--border);
+        }
+
+        .btn-danger {
+            background: transparent;
+            color: var(--error);
+            border: 1px solid var(--error);
+        }
+
+        .btn-danger:hover:not(:disabled) {
+            background: var(--error);
+            color: white;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-large {
+            padding: 16px 32px;
+            font-size: 1.1rem;
+        }
+
+        .tips-box {
+            background: var(--accent-dim);
+            border: 1px solid var(--accent);
+            border-radius: var(--radius-sm);
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+
+        .tips-box.success {
+            background: var(--success-dim);
+            border-color: var(--success);
+        }
+
+        .tips-box h4 {
+            color: var(--accent);
+            font-size: 0.9rem;
+            margin-bottom: 12px;
+        }
+
+        .tips-box.success h4 {
+            color: var(--success);
+        }
+
+        .tips-box ul, .tips-box ol {
+            list-style: none;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .tips-box li {
+            padding: 4px 0;
+            padding-left: 20px;
+            position: relative;
+        }
+
+        .tips-box ul li::before {
+            content: "•";
+            position: absolute;
+            left: 6px;
+            color: var(--accent);
+        }
+
+        .tips-box.success ul li::before {
+            color: var(--success);
+        }
+
+        .tips-box ol {
+            counter-reset: step-counter;
+        }
+
+        .tips-box ol li {
+            counter-increment: step-counter;
+        }
+
+        .tips-box ol li::before {
+            content: counter(step-counter) ".";
+            position: absolute;
+            left: 2px;
+            color: var(--success);
+            font-weight: 600;
+        }
+
+        .diagnostics {
+            font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+            font-size: 0.8rem;
+        }
+
+        .diag-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .diag-row:last-child {
+            border-bottom: none;
+        }
+
+        .diag-label {
+            color: var(--text-muted);
+        }
+
+        .diag-value {
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+
+        .diag-value.success {
+            color: var(--success);
+        }
+
+        .diag-value.warning {
+            color: var(--warning);
+        }
+
+        .diag-value.error {
+            color: var(--error);
+        }
+
+        .error-box {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid var(--error);
+            border-radius: var(--radius-sm);
+            padding: 12px;
+            margin-top: 12px;
+            color: var(--error);
+            font-size: 0.85rem;
+        }
+
+        .manifest-section {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .clip-count-badge {
+            background: var(--bg-tertiary);
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .last-clip-info {
+            margin-top: 16px;
+            padding: 12px;
+            background: var(--bg-tertiary);
+            border-radius: var(--radius-sm);
+            font-size: 0.85rem;
+        }
+
+        .last-clip-info strong {
+            color: var(--text-primary);
+        }
+
+        .collapsible-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .collapsible-header .toggle-icon {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            transition: transform 0.2s;
+        }
+
+        .collapsible-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+        }
+
+        .collapsible-content.open {
+            max-height: 1000px;
+        }
+
+        .collapsible-inner {
+            padding-top: 16px;
+        }
+
+        .upload-section {
+            text-align: center;
+        }
+
+        .upload-section .btn {
+            margin-bottom: 16px;
+        }
+
+        .drive-link {
+            display: inline-block;
+            padding: 12px 24px;
+            background: var(--bg-tertiary);
+            border: 2px dashed var(--success);
+            border-radius: var(--radius-sm);
+            color: var(--success);
+            text-decoration: none;
+            font-weight: 500;
+            transition: all 0.2s;
+            margin: 12px 0;
+        }
+
+        .drive-link:hover {
+            background: var(--success-dim);
+            border-style: solid;
+        }
+
+        .clip-list {
+            max-height: 200px;
+            overflow-y: auto;
+            background: var(--bg-tertiary);
+            border-radius: var(--radius-sm);
+            padding: 8px;
+            margin-top: 12px;
+            font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+            font-size: 0.75rem;
+        }
+
+        .clip-list-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+
+        .clip-list-item:nth-child(odd) {
+            background: rgba(255,255,255,0.03);
+        }
+
+        .clip-list-item .clip-name {
+            color: var(--text-secondary);
+        }
+
+        .clip-list-item .clip-status {
+            color: var(--success);
+        }
+
+        .memory-warning {
+            background: rgba(245, 158, 11, 0.1);
+            border: 1px solid var(--warning);
+            border-radius: var(--radius-sm);
+            padding: 12px;
+            margin-top: 12px;
+            color: var(--warning);
+            font-size: 0.85rem;
+        }
+
+        @media (max-width: 480px) {
+            .form-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .countdown-display {
+                font-size: 4rem;
+            }
+            
+            .record-btn {
+                width: 100px;
+                height: 100px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Hey Magis – Wake Word Recorder</h1>
+            <p>Help train our wake word detection by recording "Hey Magis"</p>
+        </header>
+
+        <!-- Session Setup -->
+        <div class="card">
+            <div class="card-title">Session Setup</div>
+            <div class="form-grid">
+                <div class="form-group full-width">
+                    <label for="speaker">Your Name *</label>
+                    <input type="text" id="speaker" placeholder="e.g., john_doe (letters, numbers, underscores only)" required>
+                </div>
+                <div class="form-group">
+                    <label for="device">Recording Device *</label>
+                    <select id="device">
+                        <option value="phone_mic">Phone Mic</option>
+                        <option value="laptop_mic">Laptop Mic</option>
+                        <option value="wired_earbuds_mic">Wired Earbuds Mic</option>
+                        <option value="bluetooth_earbuds_mic">Bluetooth Earbuds Mic</option>
+                        <option value="external_usb_mic">External USB Mic</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="environment">Environment *</label>
+                    <select id="environment">
+                        <option value="quiet">Quiet</option>
+                        <option value="moderate_noise">Moderate Noise</option>
+                        <option value="noisy">Noisy</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="targetCount">Target Clips</label>
+                    <input type="number" id="targetCount" value="200" min="1" max="500">
+                </div>
+                <div class="form-group">
+                    <label for="sessionId">Session ID</label>
+                    <input type="text" id="sessionId" readonly>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recording Tips -->
+        <div class="card">
+            <div class="collapsible-header" onclick="toggleCollapsible(this)">
+                <div class="card-title" style="margin-bottom: 0;">Recording Tips</div>
+                <span class="toggle-icon">▼</span>
+            </div>
+            <div class="collapsible-content open">
+                <div class="collapsible-inner">
+                    <div class="tips-box">
+                        <h4>🎙️ Microphone Selection</h4>
+                        <ul>
+                            <li><strong>Best:</strong> Phone mic or wired earbuds mic close to mouth</li>
+                            <li><strong>OK:</strong> Laptop mic (more room echo)</li>
+                            <li><strong>Avoid:</strong> Bluetooth earbuds (codec + noise suppression issues)</li>
+                        </ul>
+                    </div>
+                    <div class="tips-box">
+                        <h4>🎯 Recording Technique</h4>
+                        <ul>
+                            <li>Record in a quiet room; reduce fan/AC/echo</li>
+                            <li>After the beep, wait a brief beat (~0.3s) then say <strong>"Hey Magis"</strong> clearly</li>
+                            <li>Stay in the same room for your entire session</li>
+                            <li>Aim for at least 100 clips (200 is great!)</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recording Section -->
+        <div class="card recording-section">
+            <div class="countdown-display" id="countdownDisplay">—</div>
+            <div class="status-text" id="statusText">Press Record to begin</div>
+            
+            <button class="record-btn" id="recordBtn" onclick="startRecording()">
+                <div class="record-btn-inner"></div>
+            </button>
+            
+            <div class="progress-display">
+                <span id="clipCount">0</span> / <span id="targetDisplay">200</span>
+            </div>
+            <div class="progress-bar-container">
+                <div class="progress-bar" id="progressBar" style="width: 0%"></div>
+            </div>
+            
+            <div class="playback-controls">
+                <button class="btn btn-secondary" id="playBtn" onclick="playLastClip()" disabled>
+                    ▶ Play Last Clip
+                </button>
+                <button class="btn btn-danger" id="discardBtn" onclick="discardLastClip()" disabled>
+                    ✕ Discard Last
+                </button>
+            </div>
+            
+            <div class="last-clip-info" id="lastClipInfo" style="display: none;">
+                <strong>Last clip:</strong> <span id="lastClipName">—</span><br>
+                <strong>Duration:</strong> <span id="lastClipDuration">—</span>s
+                <span id="levelWarning" style="display: none; color: var(--warning); margin-left: 12px;">
+                    ⚠️ Very quiet recording
+                </span>
+            </div>
+
+            <div class="memory-warning" id="memoryWarning" style="display: none;">
+                ⚠️ You have many clips in memory. Consider downloading your ZIP soon to free up browser memory.
+            </div>
+        </div>
+
+        <!-- When Recordings Complete -->
+        <div class="card highlight-success">
+            <div class="card-title success">📦 When You're Done Recording</div>
+            <div class="upload-section">
+                <button class="btn btn-success btn-large" id="downloadZipBtn" onclick="downloadAllAsZip()" disabled>
+                    ⬇️ Download All Recordings (ZIP)
+                </button>
+                
+                <div class="tips-box success">
+                    <h4>📤 How to Submit Your Recordings</h4>
+                    <ol>
+                        <li>Click the green button above to download your ZIP folder</li>
+                        <li>Click the Google Drive link below to open the shared folder</li>
+                        <li>Drag your downloaded ZIP file into the Drive folder</li>
+                        <li>That's it! Thank you for helping train Hey Magis! 🎉</li>
+                    </ol>
+                </div>
+
+                <a href="#" id="driveLink" class="drive-link" target="_blank" rel="noopener">
+                    📁 Open Google Drive Upload Folder
+                </a>
+                
+                <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 8px;">
+                    Your ZIP will be named: <code id="zipPreviewName">heymagis_[name]_[session].zip</code>
+                </p>
+            </div>
+        </div>
+
+        <!-- Recorded Clips List -->
+        <div class="card">
+            <div class="collapsible-header" onclick="toggleCollapsible(this)">
+                <div class="card-title" style="margin-bottom: 0;">
+                    Recorded Clips <span class="clip-count-badge" id="manifestClipCount">0</span>
+                </div>
+                <span class="toggle-icon">▶</span>
+            </div>
+            <div class="collapsible-content">
+                <div class="collapsible-inner">
+                    <div class="clip-list" id="clipList">
+                        <div style="color: var(--text-muted); text-align: center; padding: 20px;">
+                            No clips recorded yet
+                        </div>
+                    </div>
+                    <div style="margin-top: 12px;">
+                        <button class="btn btn-secondary" onclick="downloadManifest()" style="font-size: 0.85rem;">
+                            📄 Download Manifest JSON
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Diagnostics -->
+        <div class="card">
+            <div class="collapsible-header" onclick="toggleCollapsible(this)">
+                <div class="card-title" style="margin-bottom: 0;">Diagnostics</div>
+                <span class="toggle-icon">▶</span>
+            </div>
+            <div class="collapsible-content">
+                <div class="collapsible-inner diagnostics">
+                    <div class="diag-row">
+                        <span class="diag-label">Input Sample Rate</span>
+                        <span class="diag-value" id="diagInputSR">—</span>
+                    </div>
+                    <div class="diag-row">
+                        <span class="diag-label">Input Channels</span>
+                        <span class="diag-value" id="diagInputCh">—</span>
+                    </div>
+                    <div class="diag-row">
+                        <span class="diag-label">Output Sample Rate</span>
+                        <span class="diag-value success" id="diagOutputSR">16000 Hz</span>
+                    </div>
+                    <div class="diag-row">
+                        <span class="diag-label">Output Channels</span>
+                        <span class="diag-value success" id="diagOutputCh">1 (Mono)</span>
+                    </div>
+                    <div class="diag-row">
+                        <span class="diag-label">Target Duration</span>
+                        <span class="diag-value" id="diagDuration">1.200s</span>
+                    </div>
+                    <div class="diag-row">
+                        <span class="diag-label">Browser</span>
+                        <span class="diag-value" id="diagBrowser">—</span>
+                    </div>
+                    <div class="diag-row">
+                        <span class="diag-label">MediaRecorder</span>
+                        <span class="diag-value" id="diagRecorder">—</span>
+                    </div>
+                    <div id="errorBox" class="error-box" style="display: none;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // =============================================================================
+        // CONFIGURATION - EDIT THIS!
+        // =============================================================================
+        
+        // Set your Google Drive shared folder URL here:
+        const GOOGLE_DRIVE_FOLDER_URL = 'https://drive.google.com/drive/folders/1pVDbF_SkdtWXKPGi3Yrza6JTyCES31PL?usp=sharing';
+        
+        // =============================================================================
+        // RECORDING CONFIGURATION
+        // =============================================================================
+        const CONFIG = {
+            COUNTDOWN_SEC: 2,
+            RECORD_SEC: 1.2,
+            OUTPUT_SR: 16000,
+            OUTPUT_CHANNELS: 1,
+            BEEP_FREQ: 880,
+            BEEP_DURATION: 0.15,
+            QUIET_THRESHOLD: 0.02,
+            MEMORY_WARNING_THRESHOLD: 150  // Show warning after this many clips
+        };
+
+        // =============================================================================
+        // STATE
+        // =============================================================================
+        let state = {
+            clipCount: 0,
+            sessionId: generateSessionId(),
+            clips: [],           // Metadata for each clip
+            clipBlobs: [],       // Actual audio blobs stored in memory
+            lastClipIndex: -1,   // Index of last recorded clip for playback/discard
+            isRecording: false,
+            audioContext: null,
+            mediaStream: null,
+            inputSampleRate: null,
+            inputChannels: null
+        };
+
+        // =============================================================================
+        // INITIALIZATION
+        // =============================================================================
+        function init() {
+            document.getElementById('sessionId').value = state.sessionId;
+            document.getElementById('driveLink').href = GOOGLE_DRIVE_FOLDER_URL;
+            
+            // Check if Drive URL is configured
+            if (GOOGLE_DRIVE_FOLDER_URL.includes('YOUR_FOLDER_ID_HERE')) {
+                document.getElementById('driveLink').style.display = 'none';
+                console.warn('Google Drive folder URL not configured. Edit GOOGLE_DRIVE_FOLDER_URL in the script.');
+            }
+            
+            detectBrowser();
+            checkMediaRecorderSupport();
+            
+            document.getElementById('targetCount').addEventListener('change', updateTargetDisplay);
+            document.getElementById('speaker').addEventListener('input', function(e) {
+                sanitizeSpeakerInput(e);
+                updateZipPreviewName();
+            });
+            
+            updateTargetDisplay();
+            updateZipPreviewName();
+        }
+
+        function generateSessionId() {
+            const now = new Date();
+            const ts = now.toISOString().slice(0, 19).replace(/[-:T]/g, '');
+            return ts;
+        }
+
+        function detectBrowser() {
+            const ua = navigator.userAgent;
+            let browser = 'Unknown';
+            if (ua.includes('Safari') && !ua.includes('Chrome')) {
+                browser = 'Safari';
+            } else if (ua.includes('Chrome')) {
+                browser = 'Chrome';
+            } else if (ua.includes('Firefox')) {
+                browser = 'Firefox';
+            }
+            document.getElementById('diagBrowser').textContent = browser;
+        }
+
+        function checkMediaRecorderSupport() {
+            const supported = typeof MediaRecorder !== 'undefined';
+            const el = document.getElementById('diagRecorder');
+            if (supported) {
+                const types = ['audio/webm', 'audio/webm;codecs=opus', 'audio/ogg', 'audio/mp4'];
+                const supportedType = types.find(t => MediaRecorder.isTypeSupported(t)) || 'default';
+                el.textContent = `Supported (${supportedType})`;
+                el.className = 'diag-value success';
+            } else {
+                el.textContent = 'Not supported';
+                el.className = 'diag-value error';
+                showError('MediaRecorder not supported. Using fallback ScriptProcessor method.');
+            }
+        }
+
+        function sanitizeSpeakerInput(e) {
+            let val = e.target.value.toLowerCase();
+            val = val.replace(/[^a-z0-9_]/g, '_');
+            val = val.replace(/_+/g, '_');
+            e.target.value = val;
+        }
+
+        function updateTargetDisplay() {
+            const target = parseInt(document.getElementById('targetCount').value) || 200;
+            document.getElementById('targetDisplay').textContent = target;
+            updateProgress();
+        }
+
+        function updateProgress() {
+            const target = parseInt(document.getElementById('targetCount').value) || 200;
+            const progress = Math.min(100, (state.clipCount / target) * 100);
+            document.getElementById('clipCount').textContent = state.clipCount;
+            document.getElementById('progressBar').style.width = progress + '%';
+            document.getElementById('manifestClipCount').textContent = state.clips.length;
+            
+            // Enable/disable download button
+            document.getElementById('downloadZipBtn').disabled = state.clips.length === 0;
+            
+            // Show memory warning if needed
+            if (state.clips.length >= CONFIG.MEMORY_WARNING_THRESHOLD) {
+                document.getElementById('memoryWarning').style.display = 'block';
+            }
+        }
+
+        function updateZipPreviewName() {
+            const speaker = document.getElementById('speaker').value.trim() || '[name]';
+            document.getElementById('zipPreviewName').textContent = 
+                `heymagis_${speaker}_${state.sessionId}.zip`;
+        }
+
+        function updateClipList() {
+            const listEl = document.getElementById('clipList');
+            if (state.clips.length === 0) {
+                listEl.innerHTML = `
+                    <div style="color: var(--text-muted); text-align: center; padding: 20px;">
+                        No clips recorded yet
+                    </div>
+                `;
+                return;
+            }
+            
+            listEl.innerHTML = state.clips.map((clip, i) => `
+                <div class="clip-list-item">
+                    <span class="clip-name">${clip.filename}</span>
+                    <span class="clip-status">✓ ${clip.duration_sec.toFixed(2)}s</span>
+                </div>
+            `).join('');
+            
+            // Scroll to bottom
+            listEl.scrollTop = listEl.scrollHeight;
+        }
+
+        function toggleCollapsible(header) {
+            const content = header.nextElementSibling;
+            const icon = header.querySelector('.toggle-icon');
+            content.classList.toggle('open');
+            icon.textContent = content.classList.contains('open') ? '▼' : '▶';
+        }
+
+        // =============================================================================
+        // AUDIO CONTEXT & BEEP
+        // =============================================================================
+        function getAudioContext() {
+            if (!state.audioContext) {
+                state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            return state.audioContext;
+        }
+
+        function playBeep() {
+            const ctx = getAudioContext();
+            const oscillator = ctx.createOscillator();
+            const gain = ctx.createGain();
+            
+            oscillator.type = 'sine';
+            oscillator.frequency.setValueAtTime(CONFIG.BEEP_FREQ, ctx.currentTime);
+            
+            gain.gain.setValueAtTime(0.3, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + CONFIG.BEEP_DURATION);
+            
+            oscillator.connect(gain);
+            gain.connect(ctx.destination);
+            
+            oscillator.start(ctx.currentTime);
+            oscillator.stop(ctx.currentTime + CONFIG.BEEP_DURATION);
+        }
+
+        // =============================================================================
+        // RECORDING FLOW
+        // =============================================================================
+        async function startRecording() {
+            // Validate inputs
+            const speaker = document.getElementById('speaker').value.trim();
+            if (!speaker) {
+                showError('Please enter your name');
+                return;
+            }
+
+            const recordBtn = document.getElementById('recordBtn');
+            const statusText = document.getElementById('statusText');
+            const countdownDisplay = document.getElementById('countdownDisplay');
+            
+            recordBtn.disabled = true;
+            document.getElementById('playBtn').disabled = true;
+            document.getElementById('discardBtn').disabled = true;
+
+            try {
+                // Request microphone access
+                statusText.textContent = 'Requesting microphone access...';
+                state.mediaStream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        echoCancellation: false,
+                        noiseSuppression: false,
+                        autoGainControl: false
+                    }
+                });
+                
+                // Get input info
+                const ctx = getAudioContext();
+                const sourceNode = ctx.createMediaStreamSource(state.mediaStream);
+                state.inputSampleRate = ctx.sampleRate;
+                state.inputChannels = sourceNode.channelCount || 1;
+                
+                document.getElementById('diagInputSR').textContent = state.inputSampleRate + ' Hz';
+                document.getElementById('diagInputCh').textContent = state.inputChannels;
+                
+                // Countdown
+                for (let i = CONFIG.COUNTDOWN_SEC; i > 0; i--) {
+                    countdownDisplay.textContent = i;
+                    statusText.textContent = 'Get ready...';
+                    await sleep(1000);
+                }
+                
+                // Beep
+                playBeep();
+                await sleep(CONFIG.BEEP_DURATION * 1000);
+                
+                // Record
+                countdownDisplay.textContent = '●';
+                countdownDisplay.classList.add('recording');
+                recordBtn.classList.add('recording');
+                statusText.textContent = 'Recording... say "Hey Magis"';
+                state.isRecording = true;
+                
+                const audioData = await recordAudio(CONFIG.RECORD_SEC);
+                
+                // Stop recording UI
+                state.isRecording = false;
+                countdownDisplay.classList.remove('recording');
+                recordBtn.classList.remove('recording');
+                countdownDisplay.textContent = '✓';
+                statusText.textContent = 'Processing...';
+                
+                // Process audio
+                const wavBlob = await processAudio(audioData);
+                
+                // Generate filename
+                const device = document.getElementById('device').value;
+                const env = document.getElementById('environment').value;
+                const clipNum = String(state.clipCount + 1).padStart(6, '0');
+                const filename = `${speaker}_${device}_${env}_${state.sessionId}_${clipNum}.wav`;
+                
+                // Validate
+                const validation = await validateWav(wavBlob);
+                if (!validation.valid) {
+                    showError(`WAV validation failed: ${validation.error}`);
+                    statusText.textContent = 'Validation failed - clip not saved';
+                } else {
+                    // Store in memory
+                    state.clipBlobs.push(wavBlob);
+                    state.lastClipIndex = state.clipBlobs.length - 1;
+                    
+                    // Update state
+                    state.clipCount++;
+                    state.clips.push({
+                        filename: filename,
+                        clip_number: state.clipCount,
+                        timestamp_iso: new Date().toISOString(),
+                        duration_sec: validation.duration
+                    });
+                    
+                    updateProgress();
+                    updateClipList();
+                    
+                    // Update last clip info
+                    document.getElementById('lastClipInfo').style.display = 'block';
+                    document.getElementById('lastClipName').textContent = filename;
+                    document.getElementById('lastClipDuration').textContent = validation.duration.toFixed(3);
+                    
+                    // Check if quiet
+                    const rms = calculateRMS(audioData);
+                    const levelWarning = document.getElementById('levelWarning');
+                    if (rms < CONFIG.QUIET_THRESHOLD) {
+                        levelWarning.style.display = 'inline';
+                    } else {
+                        levelWarning.style.display = 'none';
+                    }
+                    
+                    statusText.textContent = `Clip ${state.clipCount} saved! Ready for next.`;
+                }
+                
+                document.getElementById('playBtn').disabled = false;
+                document.getElementById('discardBtn').disabled = false;
+                
+            } catch (err) {
+                console.error('Recording error:', err);
+                showError(err.message);
+                statusText.textContent = 'Error - see diagnostics';
+                countdownDisplay.textContent = '✕';
+            } finally {
+                // Stop media stream
+                if (state.mediaStream) {
+                    state.mediaStream.getTracks().forEach(track => track.stop());
+                    state.mediaStream = null;
+                }
+                recordBtn.disabled = false;
+            }
+        }
+
+        async function recordAudio(durationSec) {
+            return new Promise((resolve, reject) => {
+                const ctx = getAudioContext();
+                const source = ctx.createMediaStreamSource(state.mediaStream);
+                
+                const bufferSize = 4096;
+                const processor = ctx.createScriptProcessor(bufferSize, 1, 1);
+                
+                const chunks = [];
+                const totalSamples = Math.ceil(ctx.sampleRate * durationSec);
+                let samplesRecorded = 0;
+                
+                processor.onaudioprocess = (e) => {
+                    if (samplesRecorded >= totalSamples) {
+                        return;
+                    }
+                    
+                    const inputData = e.inputBuffer.getChannelData(0);
+                    const remaining = totalSamples - samplesRecorded;
+                    const samplesToTake = Math.min(inputData.length, remaining);
+                    
+                    chunks.push(new Float32Array(inputData.slice(0, samplesToTake)));
+                    samplesRecorded += samplesToTake;
+                    
+                    if (samplesRecorded >= totalSamples) {
+                        processor.disconnect();
+                        source.disconnect();
+                        
+                        const totalLength = chunks.reduce((sum, c) => sum + c.length, 0);
+                        const combined = new Float32Array(totalLength);
+                        let offset = 0;
+                        for (const chunk of chunks) {
+                            combined.set(chunk, offset);
+                            offset += chunk.length;
+                        }
+                        
+                        resolve({
+                            samples: combined,
+                            sampleRate: ctx.sampleRate
+                        });
+                    }
+                };
+                
+                source.connect(processor);
+                processor.connect(ctx.destination);
+                
+                // Fallback timeout
+                setTimeout(() => {
+                    if (samplesRecorded < totalSamples) {
+                        processor.disconnect();
+                        source.disconnect();
+                        
+                        const totalLength = chunks.reduce((sum, c) => sum + c.length, 0);
+                        const combined = new Float32Array(totalLength);
+                        let offset = 0;
+                        for (const chunk of chunks) {
+                            combined.set(chunk, offset);
+                            offset += chunk.length;
+                        }
+                        
+                        resolve({
+                            samples: combined,
+                            sampleRate: ctx.sampleRate
+                        });
+                    }
+                }, (durationSec + 0.5) * 1000);
+            });
+        }
+
+        // =============================================================================
+        // AUDIO PROCESSING
+        // =============================================================================
+        async function processAudio(audioData) {
+            const { samples, sampleRate } = audioData;
+            const resampled = await resampleAudio(samples, sampleRate, CONFIG.OUTPUT_SR);
+            const wavBlob = encodeWavPCM16(resampled, CONFIG.OUTPUT_SR);
+            return wavBlob;
+        }
+
+        async function resampleAudio(samples, inputSR, outputSR) {
+            if (inputSR === outputSR) {
+                return samples;
+            }
+            
+            const duration = samples.length / inputSR;
+            const outputLength = Math.ceil(duration * outputSR);
+            
+            const offlineCtx = new OfflineAudioContext(1, outputLength, outputSR);
+            const buffer = offlineCtx.createBuffer(1, samples.length, inputSR);
+            buffer.getChannelData(0).set(samples);
+            
+            const source = offlineCtx.createBufferSource();
+            source.buffer = buffer;
+            source.connect(offlineCtx.destination);
+            source.start(0);
+            
+            const renderedBuffer = await offlineCtx.startRendering();
+            return renderedBuffer.getChannelData(0);
+        }
+
+        function encodeWavPCM16(samples, sampleRate) {
+            const numChannels = 1;
+            const bitsPerSample = 16;
+            const bytesPerSample = bitsPerSample / 8;
+            const blockAlign = numChannels * bytesPerSample;
+            const byteRate = sampleRate * blockAlign;
+            const dataSize = samples.length * bytesPerSample;
+            const fileSize = 44 + dataSize;
+            
+            const buffer = new ArrayBuffer(fileSize);
+            const view = new DataView(buffer);
+            
+            // RIFF header
+            writeString(view, 0, 'RIFF');
+            view.setUint32(4, fileSize - 8, true);
+            writeString(view, 8, 'WAVE');
+            
+            // fmt chunk
+            writeString(view, 12, 'fmt ');
+            view.setUint32(16, 16, true);
+            view.setUint16(20, 1, true);
+            view.setUint16(22, numChannels, true);
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, byteRate, true);
+            view.setUint16(32, blockAlign, true);
+            view.setUint16(34, bitsPerSample, true);
+            
+            // data chunk
+            writeString(view, 36, 'data');
+            view.setUint32(40, dataSize, true);
+            
+            // PCM samples
+            let offset = 44;
+            for (let i = 0; i < samples.length; i++) {
+                let sample = Math.max(-1, Math.min(1, samples[i]));
+                sample = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+                view.setInt16(offset, sample, true);
+                offset += 2;
+            }
+            
+            return new Blob([buffer], { type: 'audio/wav' });
+        }
+
+        function writeString(view, offset, string) {
+            for (let i = 0; i < string.length; i++) {
+                view.setUint8(offset + i, string.charCodeAt(i));
+            }
+        }
+
+        function calculateRMS(audioData) {
+            const samples = audioData.samples;
+            let sum = 0;
+            for (let i = 0; i < samples.length; i++) {
+                sum += samples[i] * samples[i];
+            }
+            return Math.sqrt(sum / samples.length);
+        }
+
+        // =============================================================================
+        // VALIDATION
+        // =============================================================================
+        function validateWav(blob) {
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const buffer = e.target.result;
+                    const view = new DataView(buffer);
+                    
+                    try {
+                        const riff = String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
+                        if (riff !== 'RIFF') {
+                            resolve({ valid: false, error: 'Invalid RIFF header' });
+                            return;
+                        }
+                        
+                        const wave = String.fromCharCode(view.getUint8(8), view.getUint8(9), view.getUint8(10), view.getUint8(11));
+                        if (wave !== 'WAVE') {
+                            resolve({ valid: false, error: 'Invalid WAVE format' });
+                            return;
+                        }
+                        
+                        const audioFormat = view.getUint16(20, true);
+                        if (audioFormat !== 1) {
+                            resolve({ valid: false, error: 'Not PCM format' });
+                            return;
+                        }
+                        
+                        const channels = view.getUint16(22, true);
+                        if (channels !== 1) {
+                            resolve({ valid: false, error: `Expected mono, got ${channels} channels` });
+                            return;
+                        }
+                        
+                        const sampleRate = view.getUint32(24, true);
+                        if (sampleRate !== CONFIG.OUTPUT_SR) {
+                            resolve({ valid: false, error: `Expected ${CONFIG.OUTPUT_SR}Hz, got ${sampleRate}Hz` });
+                            return;
+                        }
+                        
+                        const bitsPerSample = view.getUint16(34, true);
+                        if (bitsPerSample !== 16) {
+                            resolve({ valid: false, error: `Expected 16-bit, got ${bitsPerSample}-bit` });
+                            return;
+                        }
+                        
+                        const dataSize = view.getUint32(40, true);
+                        const bytesPerSample = bitsPerSample / 8;
+                        const numSamples = dataSize / bytesPerSample;
+                        const duration = numSamples / sampleRate;
+                        
+                        if (duration < CONFIG.RECORD_SEC * 0.9 || duration > CONFIG.RECORD_SEC * 1.1) {
+                            resolve({ valid: false, error: `Duration ${duration.toFixed(3)}s outside expected range` });
+                            return;
+                        }
+                        
+                        resolve({ valid: true, duration: duration });
+                        
+                    } catch (err) {
+                        resolve({ valid: false, error: err.message });
+                    }
+                };
+                reader.onerror = () => resolve({ valid: false, error: 'Failed to read blob' });
+                reader.readAsArrayBuffer(blob);
+            });
+        }
+
+        // =============================================================================
+        // FILE OPERATIONS
+        // =============================================================================
+        function downloadBlob(blob, filename) {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        function playLastClip() {
+            if (state.lastClipIndex < 0 || !state.clipBlobs[state.lastClipIndex]) return;
+            
+            const url = URL.createObjectURL(state.clipBlobs[state.lastClipIndex]);
+            const audio = new Audio(url);
+            audio.onended = () => URL.revokeObjectURL(url);
+            audio.play();
+        }
+
+        function discardLastClip() {
+            if (state.lastClipIndex < 0) return;
+            
+            // Remove blob and metadata
+            state.clipBlobs.splice(state.lastClipIndex, 1);
+            state.clips.splice(state.lastClipIndex, 1);
+            
+            // Decrement counter
+            state.clipCount = Math.max(0, state.clipCount - 1);
+            
+            // Update UI
+            updateProgress();
+            updateClipList();
+            document.getElementById('statusText').textContent = `Clip discarded. Ready for next.`;
+            document.getElementById('lastClipInfo').style.display = 'none';
+            document.getElementById('discardBtn').disabled = true;
+            
+            // Reset last clip index
+            state.lastClipIndex = state.clipBlobs.length - 1;
+        }
+
+        async function downloadAllAsZip() {
+            if (state.clips.length === 0) {
+                showError('No clips to download');
+                return;
+            }
+            
+            const btn = document.getElementById('downloadZipBtn');
+            btn.disabled = true;
+            btn.textContent = '⏳ Creating ZIP...';
+            
+            try {
+                const zip = new JSZip();
+                const speaker = document.getElementById('speaker').value.trim() || 'unknown';
+                const folderName = `heymagis_${speaker}_${state.sessionId}`;
+                
+                // Create folder in zip
+                const folder = zip.folder(folderName);
+                
+                // Add all clips
+                for (let i = 0; i < state.clips.length; i++) {
+                    const clip = state.clips[i];
+                    const blob = state.clipBlobs[i];
+                    folder.file(clip.filename, blob);
+                }
+                
+                // Add manifest
+                const manifest = generateManifest();
+                folder.file('session_manifest.json', JSON.stringify(manifest, null, 2));
+                
+                // Generate and download
+                const zipBlob = await zip.generateAsync({ 
+                    type: 'blob',
+                    compression: 'DEFLATE',
+                    compressionOptions: { level: 6 }
+                }, (metadata) => {
+                    btn.textContent = `⏳ Zipping... ${metadata.percent.toFixed(0)}%`;
+                });
+                
+                downloadBlob(zipBlob, `${folderName}.zip`);
+                
+                btn.textContent = '✓ Downloaded!';
+                setTimeout(() => {
+                    btn.textContent = '⬇️ Download All Recordings (ZIP)';
+                    btn.disabled = false;
+                }, 2000);
+                
+            } catch (err) {
+                console.error('ZIP creation error:', err);
+                showError('Failed to create ZIP: ' + err.message);
+                btn.textContent = '⬇️ Download All Recordings (ZIP)';
+                btn.disabled = false;
+            }
+        }
+
+        function generateManifest() {
+            const speaker = document.getElementById('speaker').value.trim() || 'unknown';
+            const device = document.getElementById('device').value;
+            const env = document.getElementById('environment').value;
+            const target = parseInt(document.getElementById('targetCount').value) || 200;
+            
+            return {
+                speaker: speaker,
+                device: device,
+                environment: env,
+                session_id: state.sessionId,
+                created_at: new Date().toISOString(),
+                target_count: target,
+                actual_count: state.clips.length,
+                settings: {
+                    countdown_sec: CONFIG.COUNTDOWN_SEC,
+                    record_sec: CONFIG.RECORD_SEC,
+                    output_sr: CONFIG.OUTPUT_SR,
+                    output_channels: CONFIG.OUTPUT_CHANNELS,
+                    format: 'wav_pcm16'
+                },
+                clips: state.clips
+            };
+        }
+
+        function downloadManifest() {
+            const manifest = generateManifest();
+            const json = JSON.stringify(manifest, null, 2);
+            const blob = new Blob([json], { type: 'application/json' });
+            downloadBlob(blob, `session_manifest_${state.sessionId}.json`);
+        }
+
+        // =============================================================================
+        // UTILITIES
+        // =============================================================================
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        function showError(message) {
+            const errorBox = document.getElementById('errorBox');
+            errorBox.textContent = message;
+            errorBox.style.display = 'block';
+        }
+
+        // =============================================================================
+        // START
+        // =============================================================================
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>
